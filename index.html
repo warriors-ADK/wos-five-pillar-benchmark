@@ -176,7 +176,17 @@ $('continue').addEventListener('click',async()=>{
    if(next.lastAnswer)say('Saved '+next.lastAnswer.arm+' answer for '+next.lastAnswer.caseId+'.');
   }
   if(currentRun?.status==='COMPLETE')say('All question pairs saved. Independent semantic review is still required.');
- }catch(e){say('Benchmark stopped: '+e.message+'. Refresh status to check whether the step completed.');try{await updateRun();}catch{}}
+ }catch(e){
+  const messages={
+   AI_OUTPUT_TRUNCATED:'The model reached its answer limit before producing final text.',
+   AI_EMPTY_FINAL_ANSWER:'The model returned no usable final answer.',
+   AI_RESPONSE_INVALID:'The model response was incomplete or invalid.',
+   AI_GATEWAY_DISABLED:'The shared AI gateway is paused for safety.',
+  };
+  const detail=messages[e.message]||('Request stopped: '+e.message);
+  say(detail+' No retry was attempted; any provider charge remains recorded. Start a new run only after the issue is corrected.');
+  try{await updateRun();await loadRuns();}catch{}
+ }
  finally{running=false;const shouldPause=pauseRequested&&currentRun?.status==='ACTIVE'&&!currentRun.busy;
   if(shouldPause){try{drawRun((await raw('pause',{runId})).run);}catch{}}
   if(currentRun)drawRun(currentRun);}
