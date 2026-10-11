@@ -61,10 +61,14 @@ details>summary{cursor:pointer;min-height:44px;align-content:center}
 <p><button id="recover" class="secondary hidden" type="button">Recover stalled step</button></p>
 <p class="small muted">Keep this page open while it progresses. You can pause, close your phone, and sign in later to resume completed steps. If a server step is still processing, wait for it to finish. This version does not execute an unattended background worker.</p>
 <div class="actions">
-<button id="showAnswers" type="button" class="secondary">Review recent answers</button>
+<button id="showAnswers" type="button" class="secondary">Review saved answers</button>
 <button id="delete" type="button" class="danger">Delete saved run</button>
 </div>
 <div id="results"></div>
+<div class="actions" id="answerNavigation">
+<button id="previousAnswers" class="secondary" type="button" disabled>Previous 6</button>
+<button id="nextAnswers" class="secondary" type="button" disabled>Next 6</button>
+</div>
 </section>
 <div class="card"><h2>Saved benchmark runs</h2><div id="runs"></div></div>
 </section>
@@ -74,23 +78,28 @@ details>summary{cursor:pointer;min-height:44px;align-content:center}
 const $=id=>document.getElementById(id);
 const endpoint='https://urfaencnwgzfjbffoocf.supabase.co/functions/v1/wos-five-pillar-mobile';
 let config=null, accessToken=null, refreshToken=null, currentRun=null, running=false, pauseRequested=false;
+let sessionEpoch=0,runGeneration=0,answersOffset=0;
 const say=(txt)=>{$('alert').textContent=txt;};
 const hidden=(id,on)=>$(id).classList.toggle('hidden',on);
 async function raw(action, payload={},retry=true){
+ const epoch=sessionEpoch;
  const headers={'Content-Type':'application/json'};
  if(accessToken)headers.Authorization='Bearer '+accessToken;
  const r=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify({action,...payload}),cache:'no-store'});
- if(r.status===401&&retry&&refreshToken){await refreshSession();return raw(action,payload,false);}
+ if(epoch!==sessionEpoch)throw Error('SESSION_CHANGED');
+ if(r.status===401&&retry&&refreshToken){await refreshSession(epoch);return raw(action,payload,false);}
  let data={};try{data=await r.json();}catch{}
+ if(epoch!==sessionEpoch)throw Error('SESSION_CHANGED');
  if(!r.ok)throw Error(data.error||'REQUEST_FAILED');
  return data;
 }
-async function refreshSession(){
- if(!config||!refreshToken)throw Error('SIGN_IN_AGAIN');
+async function refreshSession(epoch=sessionEpoch){
+ if(!config||!refreshToken||epoch!==sessionEpoch)throw Error('SIGN_IN_AGAIN');
  const response=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=refresh_token',{
   method:'POST',headers:{'Content-Type':'application/json',apikey:config.anonKey},
   body:JSON.stringify({refresh_token:refreshToken}),cache:'no-store'});
  const data=await response.json();
+ if(epoch!==sessionEpoch)throw Error('SESSION_CHANGED');
  if(!response.ok||!data.access_token)throw Error('SESSION_EXPIRED_SIGN_IN_AGAIN');
  accessToken=data.access_token;refreshToken=data.refresh_token;
 }
@@ -100,6 +109,10 @@ function selectedOptions(select,items){
 }
 function drawRun(run){
  if(!run){currentRun=null;hidden('runCard',true);return;}
+ if(currentRun?.id!==run.id){
+  answersOffset=0;$('results').replaceChildren();
+  $('previousAnswers').disabled=true;$('nextAnswers').disabled=true;
+ }
  currentRun=run;hidden('runCard',false);
  $('runState').textContent='Status: '+run.status+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
  $('progress').max=run.totalSteps;$('progress').value=run.completedSteps;
@@ -110,7 +123,7 @@ function drawRun(run){
  $('continue').textContent=run.status==='PAUSED'?'Resume and continue':'Run next steps';
  // The pause control stays available during a long phone-side loop;
  // it stops AFTER the currently running server step returns.
- $('pause').disabled=run.busy||run.status!=='ACTIVE';
+ $('pause').disabled=(run.busy&&!running)||run.status!=='ACTIVE';
  $('cancel').disabled=running||run.busy||!['ACTIVE','PAUSED'].includes(run.status);
  $('delete').disabled=running||run.busy||run.status==='ACTIVE';
  const stale=run.busy&&run.inflightStartedAt&&Date.now()-Date.parse(run.inflightStartedAt)>5*60*1000;
@@ -127,7 +140,7 @@ async function loadRuns(){
   button.addEventListener('click',()=>{drawRun(run);$('results').replaceChildren();});
   row.append(button);root.append(row);
  }
- if(currentRun){const latest=items.find(x=>x.id===currentRun.id);if(latest)drawRun(latest);}
+ if(currentRun){const latest=items.find(x=>x.id===currentRun.id);drawRun(latest||items[0]);}
  else drawRun(items.find(x=>['ACTIVE','PAUSED','BLOCKED'].includes(x.status))||items[0]);
 }
 async function updateRun(){
@@ -136,6 +149,7 @@ async function updateRun(){
 }
 $('login').addEventListener('submit',async e=>{
  e.preventDefault();const button=$('loginButton');button.disabled=true;
+ const epoch=++sessionEpoch;
  say('Signing in…');
  try{
   const email=$('email').value.trim(),password=$('password').value;
@@ -143,12 +157,16 @@ $('login').addEventListener('submit',async e=>{
    method:'POST',headers:{'Content-Type':'application/json',apikey:config.anonKey},
    body:JSON.stringify({email,password}),cache:'no-store'});
   const data=await response.json();if(!response.ok||!data.access_token)throw Error('SIGN_IN_FAILED');
+  if(epoch!==sessionEpoch)return;
   accessToken=data.access_token;refreshToken=data.refresh_token;
   const auth=await raw('clubs');if(!auth.clubs?.length)throw Error('NO_AUTHORIZED_CLUB');
+  if(epoch!==sessionEpoch)return;
   selectedOptions($('club'),auth.clubs);hidden('loginCard',true);hidden('workspace',false);
   $('identity').textContent='Signed in · Club access checked by server';
-  await loadRuns();say('Signed in. Start a small preview to test the gateway.');
- }catch(e){accessToken=null;refreshToken=null;say('Sign-in blocked: '+e.message);}
+  try{
+   await loadRuns();say('Signed in. Start a small preview to test the gateway.');
+  }catch(e){if(epoch===sessionEpoch)say('Signed in, but saved runs could not load: '+e.message+'. Use Refresh status.');}
+ }catch(e){if(epoch===sessionEpoch){accessToken=null;refreshToken=null;say('Sign-in blocked: '+e.message);}}
  finally{$('password').value='';button.disabled=false;}
 });
 $('caseCount').addEventListener('change',()=>hidden('fullConfirm',$('caseCount').value!=='150'));
@@ -156,27 +174,37 @@ $('create').addEventListener('click',async()=>{
  if(!$('acknowledge').checked){say('Confirm the paid-call acknowledgement before starting.');return;}
  const caseCount=Number($('caseCount').value);
  if(caseCount===150&&$('confirmText').value.trim()!=='RUN 150'){say('Type RUN 150 exactly to proceed.');return;}
- const button=$('create');button.disabled=true;
+ const button=$('create'),epoch=sessionEpoch;button.disabled=true;
  try{
   const data=await raw('create',{clubId:$('club').value,caseCount,acknowledgePaid:true,
    confirmation:caseCount===150?'RUN 150':null});
+  if(epoch!==sessionEpoch)return;
   drawRun(data.run);$('results').replaceChildren();
-  say('Run created. Press Run next steps to start paid requests.');await loadRuns();
- }catch(e){say('Cannot start: '+e.message);}finally{button.disabled=false;}
+  await loadRuns();
+  if(epoch===sessionEpoch)say('Run created. Press Run next steps to start paid requests.');
+ }catch(e){if(epoch===sessionEpoch)say('Cannot start: '+e.message);}
+ finally{button.disabled=false;}
 });
 $('continue').addEventListener('click',async()=>{
  if(!currentRun||running)return;
- const runId=currentRun.id;running=true;pauseRequested=false;
+ const runId=currentRun.id,epoch=sessionEpoch,operation=++runGeneration;
+ running=true;pauseRequested=false;drawRun(currentRun);
  try{
-  if(currentRun.status==='PAUSED')drawRun((await raw('resume',{runId})).run);
+   if(currentRun.status==='PAUSED'){
+    const resumed=await raw('resume',{runId});
+    if(epoch!==sessionEpoch||operation!==runGeneration)return;
+    drawRun(resumed.run);
+   }
   say('Running one server-side research answer at a time. Keep this page open.');
   while(!pauseRequested&&currentRun&&currentRun.id===runId&&currentRun.status==='ACTIVE'){
-   const next=await raw('next',{runId});
-   drawRun(next.run);
+       const next=await raw('next',{runId});
+    if(epoch!==sessionEpoch||operation!==runGeneration)return;
+    drawRun(next.run);
    if(next.lastAnswer)say('Saved '+next.lastAnswer.arm+' answer for '+next.lastAnswer.caseId+'.');
   }
   if(currentRun?.status==='COMPLETE')say('All question pairs saved. Independent semantic review is still required.');
  }catch(e){
+  if(epoch!==sessionEpoch||operation!==runGeneration)return;
   const messages={
    AI_OUTPUT_TRUNCATED:'The model reached its answer limit before producing final text.',
    AI_EMPTY_FINAL_ANSWER:'The model returned no usable final answer.',
@@ -191,55 +219,87 @@ $('continue').addEventListener('click',async()=>{
    : ' No automatic retry was attempted. The provider may have charged for this request.'));
   try{await updateRun();await loadRuns();}catch{}
  }
- finally{running=false;const shouldPause=pauseRequested&&currentRun?.status==='ACTIVE'&&!currentRun.busy;
-  if(shouldPause){try{drawRun((await raw('pause',{runId})).run);}catch{}}
-  if(currentRun)drawRun(currentRun);}
+ finally{
+  if(epoch===sessionEpoch&&operation===runGeneration){
+   running=false;
+   const shouldPause=pauseRequested&&currentRun?.id===runId&&currentRun.status==='ACTIVE'&&!currentRun.busy;
+   if(shouldPause){try{
+    const result=await raw('pause',{runId});
+    if(epoch===sessionEpoch&&operation===runGeneration)drawRun(result.run);
+   }catch{}}
+   if(currentRun)drawRun(currentRun);
+  }
+ }
 });
 $('pause').addEventListener('click',async()=>{
  if(!currentRun)return;pauseRequested=true;
  if(running){say('Pause requested. Current server step will finish first.');return;}
- try{drawRun((await raw('pause',{runId:currentRun.id})).run);say('Run paused. You can continue later.');}
- catch(e){say('Pause unavailable: '+e.message);}
+ const epoch=sessionEpoch,runId=currentRun.id;
+ try{const result=await raw('pause',{runId});
+  if(epoch!==sessionEpoch||currentRun?.id!==runId)return;
+  drawRun(result.run);say('Run paused. You can continue later.');
+ }catch(e){if(epoch===sessionEpoch)say('Pause unavailable: '+e.message);}
 });
 $('cancel').addEventListener('click',async()=>{
  if(!currentRun||!confirm('Cancel this benchmark? Saved answers will remain until deleted.'))return;
- pauseRequested=true;
- try{drawRun((await raw('cancel',{runId:currentRun.id})).run);say('Run cancelled.');}
- catch(e){say('Cancel unavailable: '+e.message);}
+ pauseRequested=true;const epoch=sessionEpoch,runId=currentRun.id;
+ try{const result=await raw('cancel',{runId});
+  if(epoch!==sessionEpoch||currentRun?.id!==runId)return;
+  drawRun(result.run);say('Run cancelled.');
+ }catch(e){if(epoch===sessionEpoch)say('Cancel unavailable: '+e.message);}
 });
 $('refresh').addEventListener('click',async()=>{try{await loadRuns();say('Status refreshed.');}catch(e){say('Refresh failed: '+e.message);}});
 $('logout').addEventListener('click',()=>{
- pauseRequested=true;accessToken=null;refreshToken=null;currentRun=null;
+ sessionEpoch++;runGeneration++;pauseRequested=true;running=false;
+ accessToken=null;refreshToken=null;drawRun(null);
+ $('results').replaceChildren();$('runs').replaceChildren();
  $('email').value='';$('password').value='';
  hidden('loginCard',false);hidden('workspace',true);
  say('Signed out from benchmark page. Completed results remain stored privately.');
 });
-$('showAnswers').addEventListener('click',async()=>{
+async function showAnswerPage(offset){
  if(!currentRun)return;
- const start=Math.max(0,currentRun.completedSteps-6);try{
-  const data=await raw('results',{runId:currentRun.id,offset:start});
+ const runId=currentRun.id,epoch=sessionEpoch;
+ const start=Math.max(0,Math.min(offset,Math.max(0,currentRun.completedSteps-1)));
+ try{
+  const data=await raw('results',{runId,offset:start});
+  if(epoch!==sessionEpoch||currentRun?.id!==runId)return;
   const box=$('results');box.replaceChildren();
-  if(!data.results?.length){box.textContent='No answers saved yet.';return;}
-  for(const item of data.results){
-   const section=document.createElement('section'),heading=document.createElement('strong');
-   heading.textContent=item.step+'. '+item.caseId+' · '+item.arm+' · Unscored';
-   const answer=document.createElement('pre');answer.textContent=item.answer;
-   section.append(heading,answer);box.append(section);
+  answersOffset=start;
+  if(!data.results?.length){
+   box.textContent='No answers saved at this position.';
+  }else{
+   for(const item of data.results){
+    const section=document.createElement('section'),heading=document.createElement('strong');
+    heading.textContent=item.step+'. '+item.caseId+' · '+item.arm+' · Unscored';
+    const answer=document.createElement('pre');answer.textContent=item.answer;
+    section.append(heading,answer);box.append(section);
+   }
   }
- }catch(e){say('Cannot load answers: '+e.message);}
-});
+  $('previousAnswers').disabled=start===0;
+  $('nextAnswers').disabled=!data.results?.length||start+data.results.length>=currentRun.completedSteps;
+  say('Showing saved answers '+(start+1)+'–'+Math.min(start+6,currentRun.completedSteps)+' of '+currentRun.completedSteps+'. Not independently scored.');
+ }catch(e){if(epoch===sessionEpoch)say('Cannot load answers: '+e.message);}
+}
+$('showAnswers').addEventListener('click',()=>showAnswerPage(0));
+$('previousAnswers').addEventListener('click',()=>showAnswerPage(Math.max(0,answersOffset-6)));
+$('nextAnswers').addEventListener('click',()=>showAnswerPage(answersOffset+6));
 $('recover').addEventListener('click',async()=>{
  if(!currentRun||!confirm('This step may have already used paid provider tokens. Recovering it allows a new attempt and could incur an additional charge. Continue?'))return;
- pauseRequested=true;
- try{const result=await raw('recover',{runId:currentRun.id,confirmation:'RECOVER STALLED STEP'});
-  drawRun(result.run);say('Stalled step reset to paused. The previous charge is unknown; only resume if you accept another request.');}
- catch(e){say('Recovery not available: '+e.message);}
+ pauseRequested=true;const epoch=sessionEpoch,runId=currentRun.id;
+ try{const result=await raw('recover',{runId,confirmation:'RECOVER STALLED STEP'});
+  if(epoch!==sessionEpoch||currentRun?.id!==runId)return;
+  drawRun(result.run);say('Stalled step reset to paused. The previous charge is unknown; only resume if you accept another request.');
+ }catch(e){if(epoch===sessionEpoch)say('Recovery not available: '+e.message);}
 });
 $('delete').addEventListener('click',async()=>{
  if(!currentRun||!confirm('Delete this saved run and all its answers permanently?'))return;
- try{await raw('delete',{runId:currentRun.id,confirmation:'DELETE RUN'});
-  drawRun(null);await loadRuns();say('Run and stored answers deleted.');}
- catch(e){say('Deletion blocked: '+e.message);}
+ const epoch=sessionEpoch,runId=currentRun.id;
+ try{await raw('delete',{runId,confirmation:'DELETE RUN'});
+  if(epoch!==sessionEpoch||currentRun?.id!==runId)return;
+  drawRun(null);await loadRuns();
+  if(epoch===sessionEpoch)say('Run and stored answers deleted.');
+ }catch(e){if(epoch===sessionEpoch)say('Deletion blocked: '+e.message);}
 });
 async function init(){
  try{const r=await fetch(endpoint+'?action=config',{cache:'no-store'});config=await r.json();
