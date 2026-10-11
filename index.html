@@ -182,9 +182,13 @@ $('continue').addEventListener('click',async()=>{
    AI_EMPTY_FINAL_ANSWER:'The model returned no usable final answer.',
    AI_RESPONSE_INVALID:'The model response was incomplete or invalid.',
    AI_GATEWAY_DISABLED:'The shared AI gateway is paused for safety.',
+   BENCHMARK_SAVE_UNCERTAIN:'The provider answered but saving or progress confirmation is uncertain.',
   };
   const detail=messages[e.message]||('Request stopped: '+e.message);
-  say(detail+' No retry was attempted; any provider charge remains recorded. Start a new run only after the issue is corrected.');
+  const saveUncertain=e.message==='BENCHMARK_SAVE_UNCERTAIN';
+  say(detail+(saveUncertain
+   ? ' Refresh status to reconcile any stored answer. Do not start another paid run.'
+   : ' No automatic retry was attempted. The provider may have charged for this request.'));
   try{await updateRun();await loadRuns();}catch{}
  }
  finally{running=false;const shouldPause=pauseRequested&&currentRun?.status==='ACTIVE'&&!currentRun.busy;
