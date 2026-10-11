@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Warriors OS · Football AI Benchmark</title>
+<style>
+:root{color-scheme:dark;background:#0b1220;color:#f0f5ff;font:16px/1.48 system-ui,-apple-system,'Segoe UI',sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:16px 14px 60px}
+main{max-width:720px;margin:0 auto}h1{font-size:1.6rem;margin:0 0 5px}
+.subtitle{color:#afc0d8;margin:0 0 20px}
+.card{background:#172338;border:1px solid #344864;border-radius:16px;padding:17px;margin-bottom:14px}
+label{display:block;font-weight:650;margin:12px 0 6px}input,select,button{font:inherit;min-height:48px;border-radius:10px}
+input,select{width:100%;background:#0f1928;color:white;border:1px solid #7e91af;padding:10px}
+button{border:1px solid #99b9ed;background:#2c5b95;color:#fff;font-weight:650;padding:11px 14px;cursor:pointer}
+button.secondary{background:#15243a}button.danger{border-color:#f39aa7;background:#633240}
+button:disabled{opacity:.46;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #9bceff;outline-offset:3px}
+.actions{display:flex;gap:10px;flex-wrap:wrap}.actions button{flex:1 1 120px}
+.hidden{display:none!important}.muted{color:#b4c3d8}.small{font-size:.86rem}
+strong{font-weight:750}.notice{border-left:4px solid #e9b960;padding:9px 11px;background:#302c22;border-radius:6px}
+.ok{border-left:4px solid #65c79e;padding:9px;background:#15352f;border-radius:6px}
+progress{width:100%;height:20px;accent-color:#73b7ff}
+#alert{padding:12px;min-height:48px;color:#e9f3ff;border:1px solid #526985;border-radius:10px;overflow-wrap:anywhere}
+#results>section{border-top:1px solid #42546b;padding:10px 0}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.9rem}
+details>summary{cursor:pointer;min-height:44px;align-content:center}
+.footer{font-size:.83rem;color:#b2bfd3}
+</style></head><body><main>
+<h1>Warriors OS · Football AI Benchmark</h1>
+<p class="subtitle">Five pillars · Phone-only research test · No PC required</p>
+<div class="card notice"><strong>Research only.</strong> This compares DeepSeek gateway answers with and without unapproved WOS draft notes. It does not test the full Ask Warriors agent, prove football intelligence gains, publish knowledge, or give medical clearance. Actual provider calls may cost money.</div>
+<div id="alert" role="status" aria-live="polite">Checking server configuration…</div>
+<section id="loginCard" class="card hidden" aria-labelledby="loginTitle">
+<h2 id="loginTitle">Sign in securely</h2>
+<p class="muted small">Use your usual WOS account. Your password and login tokens remain in this browser session; neither is stored in benchmark results.</p>
+<form id="login">
+<label for="email">WOS email</label><input id="email" type="email" autocomplete="username" required>
+<label for="password">WOS password</label><input id="password" type="password" autocomplete="current-password" required>
+<button id="loginButton" type="submit">Sign in</button>
+</form></section>
+<section id="workspace" class="hidden">
+<div class="card"><div class="actions"><button class="secondary" id="refresh" type="button">Refresh status</button><button class="secondary" id="logout" type="button">Sign out</button></div>
+<p id="identity" class="muted small"></p>
+<h2>Start a controlled comparison</h2>
+<label for="club">Authorized club</label><select id="club"></select>
+<label for="caseCount">Test size</label><select id="caseCount">
+<option value="5">Preview: 5 questions × 2 answers (10 calls)</option>
+<option value="15">Pilot: 15 questions × 2 answers (30 calls)</option>
+<option value="150">Full: 150 questions × 2 answers (300 calls)</option></select>
+<p class="small muted">Each answer is charged against the existing gateway quota and the run's own server token budget. No financial cost ceiling is guaranteed in rand.</p>
+<label><input id="acknowledge" type="checkbox" style="width:auto;min-height:20px;margin-right:7px">I authorize potentially paid, read-only DeepSeek research calls.</label>
+<div id="fullConfirm" class="hidden"><label for="confirmText">Type RUN 150 to authorize 300 model calls</label><input id="confirmText" placeholder="RUN 150" autocomplete="off"></div>
+<button id="create" type="button">Create benchmark run</button>
+</div>
+<section id="runCard" class="card hidden" aria-labelledby="runTitle"><h2 id="runTitle">Current benchmark run</h2>
+<p id="runState"></p><progress id="progress" max="1" value="0"></progress><p id="numbers" class="muted"></p>
+<p id="budget" class="muted small"></p>
+<div class="actions">
+<button id="continue" type="button">Run next steps</button>
+<button id="pause" class="secondary" type="button">Pause</button>
+<button id="cancel" class="danger" type="button">Cancel</button>
+</div>
+<p><button id="recover" class="secondary hidden" type="button">Recover stalled step</button></p>
+<p class="small muted">Keep this page open while it progresses. You can pause, close your phone, and sign in later to resume completed steps. If a server step is still processing, wait for it to finish. This version does not execute an unattended background worker.</p>
+<div class="actions">
+<button id="showAnswers" type="button" class="secondary">Review recent answers</button>
+<button id="delete" type="button" class="danger">Delete saved run</button>
+</div>
+<div id="results"></div>
+</section>
+<div class="card"><h2>Saved benchmark runs</h2><div id="runs"></div></div>
+</section>
+<p class="footer">Sensitive information: Do not paste player medical data or personal notes into this benchmark. Results are private to the authorized run owner and subject to server storage access rules. Feedback scores require independent qualified review.</p>
+</main><script>
+'use strict';
+const $=id=>document.getElementById(id);
+const endpoint='https://urfaencnwgzfjbffoocf.supabase.co/functions/v1/wos-five-pillar-mobile';
+let config=null, accessToken=null, refreshToken=null, currentRun=null, running=false, pauseRequested=false;
+const say=(txt)=>{$('alert').textContent=txt;};
+const hidden=(id,on)=>$(id).classList.toggle('hidden',on);
+async function raw(action, payload={},retry=true){
+ const headers={'Content-Type':'application/json'};
+ if(accessToken)headers.Authorization='Bearer '+accessToken;
+ const r=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify({action,...payload}),cache:'no-store'});
+ if(r.status===401&&retry&&refreshToken){await refreshSession();return raw(action,payload,false);}
+ let data={};try{data=await r.json();}catch{}
+ if(!r.ok)throw Error(data.error||'REQUEST_FAILED');
+ return data;
+}
+async function refreshSession(){
+ if(!config||!refreshToken)throw Error('SIGN_IN_AGAIN');
+ const response=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=refresh_token',{
+  method:'POST',headers:{'Content-Type':'application/json',apikey:config.anonKey},
+  body:JSON.stringify({refresh_token:refreshToken}),cache:'no-store'});
+ const data=await response.json();
+ if(!response.ok||!data.access_token)throw Error('SESSION_EXPIRED_SIGN_IN_AGAIN');
+ accessToken=data.access_token;refreshToken=data.refresh_token;
+}
+function selectedOptions(select,items){
+ select.replaceChildren();
+ items.forEach(item=>{const o=document.createElement('option');o.value=item.id;o.textContent=item.label;select.append(o);});
+}
+function drawRun(run){
+ if(!run){currentRun=null;hidden('runCard',true);return;}
+ currentRun=run;hidden('runCard',false);
+ $('runState').textContent='Status: '+run.status+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
+ $('progress').max=run.totalSteps;$('progress').value=run.completedSteps;
+ $('numbers').textContent=run.completedSteps+' of '+run.totalSteps+' answers saved · '+Math.floor(run.completedSteps/2)+' complete question pairs';
+ $('budget').textContent='Server token reservations: '+run.spentReservedTokens+' / '+run.maxReservedTokens+
+  ' · Reported provider tokens: '+run.reportedProviderTokens+(run.errorCode?' · Last error: '+run.errorCode:'');
+ $('continue').disabled=running||run.busy||!['ACTIVE','PAUSED'].includes(run.status);
+ $('continue').textContent=run.status==='PAUSED'?'Resume and continue':'Run next steps';
+ // The pause control stays available during a long phone-side loop;
+ // it stops AFTER the currently running server step returns.
+ $('pause').disabled=run.busy||run.status!=='ACTIVE';
+ $('cancel').disabled=running||run.busy||!['ACTIVE','PAUSED'].includes(run.status);
+ $('delete').disabled=running||run.busy||run.status==='ACTIVE';
+ const stale=run.busy&&run.inflightStartedAt&&Date.now()-Date.parse(run.inflightStartedAt)>5*60*1000;
+ hidden('recover',!stale);
+}
+async function loadRuns(){
+ const response=await raw('list');const items=response.runs||[];
+ const root=$('runs');root.replaceChildren();
+ if(!items.length){root.textContent='No saved runs.';drawRun(null);return;}
+ for(const run of items){
+  const row=document.createElement('div');row.style.marginBottom='12px';
+  const button=document.createElement('button');button.className='secondary';
+  button.textContent=run.status+' · '+run.completedSteps+'/'+run.totalSteps+' · '+new Date(run.createdAt).toLocaleString();
+  button.addEventListener('click',()=>{drawRun(run);$('results').replaceChildren();});
+  row.append(button);root.append(row);
+ }
+ if(currentRun){const latest=items.find(x=>x.id===currentRun.id);if(latest)drawRun(latest);}
+ else drawRun(items.find(x=>['ACTIVE','PAUSED','BLOCKED'].includes(x.status))||items[0]);
+}
+async function updateRun(){
+ if(!currentRun)return;
+ const res=await raw('status',{runId:currentRun.id});drawRun(res.run);
+}
+$('login').addEventListener('submit',async e=>{
+ e.preventDefault();const button=$('loginButton');button.disabled=true;
+ say('Signing in…');
+ try{
+  const email=$('email').value.trim(),password=$('password').value;
+  const response=await fetch(config.supabaseUrl+'/auth/v1/token?grant_type=password',{
+   method:'POST',headers:{'Content-Type':'application/json',apikey:config.anonKey},
+   body:JSON.stringify({email,password}),cache:'no-store'});
+  const data=await response.json();if(!response.ok||!data.access_token)throw Error('SIGN_IN_FAILED');
+  accessToken=data.access_token;refreshToken=data.refresh_token;
+  const auth=await raw('clubs');if(!auth.clubs?.length)throw Error('NO_AUTHORIZED_CLUB');
+  selectedOptions($('club'),auth.clubs);hidden('loginCard',true);hidden('workspace',false);
+  $('identity').textContent='Signed in · Club access checked by server';
+  await loadRuns();say('Signed in. Start a small preview to test the gateway.');
+ }catch(e){accessToken=null;refreshToken=null;say('Sign-in blocked: '+e.message);}
+ finally{$('password').value='';button.disabled=false;}
+});
+$('caseCount').addEventListener('change',()=>hidden('fullConfirm',$('caseCount').value!=='150'));
+$('create').addEventListener('click',async()=>{
+ if(!$('acknowledge').checked){say('Confirm the paid-call acknowledgement before starting.');return;}
+ const caseCount=Number($('caseCount').value);
+ if(caseCount===150&&$('confirmText').value.trim()!=='RUN 150'){say('Type RUN 150 exactly to proceed.');return;}
+ const button=$('create');button.disabled=true;
+ try{
+  const data=await raw('create',{clubId:$('club').value,caseCount,acknowledgePaid:true,
+   confirmation:caseCount===150?'RUN 150':null});
+  drawRun(data.run);$('results').replaceChildren();
+  say('Run created. Press Run next steps to start paid requests.');await loadRuns();
+ }catch(e){say('Cannot start: '+e.message);}finally{button.disabled=false;}
+});
+$('continue').addEventListener('click',async()=>{
+ if(!currentRun||running)return;
+ const runId=currentRun.id;running=true;pauseRequested=false;
+ try{
+  if(currentRun.status==='PAUSED')drawRun((await raw('resume',{runId})).run);
+  say('Running one server-side research answer at a time. Keep this page open.');
+  while(!pauseRequested&&currentRun&&currentRun.id===runId&&currentRun.status==='ACTIVE'){
+   const next=await raw('next',{runId});
+   drawRun(next.run);
+   if(next.lastAnswer)say('Saved '+next.lastAnswer.arm+' answer for '+next.lastAnswer.caseId+'.');
+  }
+  if(currentRun?.status==='COMPLETE')say('All question pairs saved. Independent semantic review is still required.');
+ }catch(e){say('Benchmark stopped: '+e.message+'. Refresh status to check whether the step completed.');try{await updateRun();}catch{}}
+ finally{running=false;const shouldPause=pauseRequested&&currentRun?.status==='ACTIVE'&&!currentRun.busy;
+  if(shouldPause){try{drawRun((await raw('pause',{runId})).run);}catch{}}
+  if(currentRun)drawRun(currentRun);}
+});
+$('pause').addEventListener('click',async()=>{
+ if(!currentRun)return;pauseRequested=true;
+ if(running){say('Pause requested. Current server step will finish first.');return;}
+ try{drawRun((await raw('pause',{runId:currentRun.id})).run);say('Run paused. You can continue later.');}
+ catch(e){say('Pause unavailable: '+e.message);}
+});
+$('cancel').addEventListener('click',async()=>{
+ if(!currentRun||!confirm('Cancel this benchmark? Saved answers will remain until deleted.'))return;
+ pauseRequested=true;
+ try{drawRun((await raw('cancel',{runId:currentRun.id})).run);say('Run cancelled.');}
+ catch(e){say('Cancel unavailable: '+e.message);}
+});
+$('refresh').addEventListener('click',async()=>{try{await loadRuns();say('Status refreshed.');}catch(e){say('Refresh failed: '+e.message);}});
+$('logout').addEventListener('click',()=>{
+ pauseRequested=true;accessToken=null;refreshToken=null;currentRun=null;
+ $('email').value='';$('password').value='';
+ hidden('loginCard',false);hidden('workspace',true);
+ say('Signed out from benchmark page. Completed results remain stored privately.');
+});
+$('showAnswers').addEventListener('click',async()=>{
+ if(!currentRun)return;
+ const start=Math.max(0,currentRun.completedSteps-6);try{
+  const data=await raw('results',{runId:currentRun.id,offset:start});
+  const box=$('results');box.replaceChildren();
+  if(!data.results?.length){box.textContent='No answers saved yet.';return;}
+  for(const item of data.results){
+   const section=document.createElement('section'),heading=document.createElement('strong');
+   heading.textContent=item.step+'. '+item.caseId+' · '+item.arm+' · Unscored';
+   const answer=document.createElement('pre');answer.textContent=item.answer;
+   section.append(heading,answer);box.append(section);
+  }
+ }catch(e){say('Cannot load answers: '+e.message);}
+});
+$('recover').addEventListener('click',async()=>{
+ if(!currentRun||!confirm('This step may have already used paid provider tokens. Recovering it allows a new attempt and could incur an additional charge. Continue?'))return;
+ pauseRequested=true;
+ try{const result=await raw('recover',{runId:currentRun.id,confirmation:'RECOVER STALLED STEP'});
+  drawRun(result.run);say('Stalled step reset to paused. The previous charge is unknown; only resume if you accept another request.');}
+ catch(e){say('Recovery not available: '+e.message);}
+});
+$('delete').addEventListener('click',async()=>{
+ if(!currentRun||!confirm('Delete this saved run and all its answers permanently?'))return;
+ try{await raw('delete',{runId:currentRun.id,confirmation:'DELETE RUN'});
+  drawRun(null);await loadRuns();say('Run and stored answers deleted.');}
+ catch(e){say('Deletion blocked: '+e.message);}
+});
+async function init(){
+ try{const r=await fetch(endpoint+'?action=config',{cache:'no-store'});config=await r.json();
+  if(!r.ok||!config.supabaseUrl||!config.anonKey)throw Error('SERVER_NOT_CONFIGURED');
+  if(!config.enabled){say('This mobile benchmark is installed but not enabled. An administrator must activate the server feature after verification.');return;}
+  if(!config.providerReady){say('The mobile benchmark is disabled until the DeepSeek gateway is configured.');return;}
+  hidden('loginCard',false);say('Ready for secure WOS sign-in.');
+ }catch(e){say('Benchmark unavailable: '+e.message);}
+}
+init();
+</script></body></html>
