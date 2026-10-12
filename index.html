@@ -122,11 +122,16 @@ function drawRun(run){
  $('newRunBlocker').textContent=blockedByOpenRun
   ? 'A '+run.caseCount+'-question run is still '+run.status.toLowerCase()+'. To start a DIFFERENT test, select the existing run and press Cancel (not Delete). Cancellation preserves its saved answers until their normal expiry. Then create the new '+$('caseCount').value+'-question run.'
   : '';
- $('runState').textContent='Status: '+run.status+' · EXISTING RUN: '+run.caseCount+' questions / '+run.totalSteps+' answers'+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
+ $('runState').textContent='Status: '+run.status+' · EXISTING RUN: '+run.caseCount+' questions / '+run.totalSteps+' answers'+(run.busy?' (server step in progress)':'')+' · Research-only AI comparison (not the full WOS agent).';
  $('progress').max=run.totalSteps;$('progress').value=run.completedSteps;
  $('numbers').textContent=run.completedSteps+' of '+run.totalSteps+' answers saved · '+Math.floor(run.completedSteps/2)+' complete question pairs';
- $('budget').textContent='Server token reservations: '+run.spentReservedTokens+' / '+run.maxReservedTokens+
-  ' · Reported provider tokens: '+run.reportedProviderTokens+(run.errorCode?' · Last error: '+run.errorCode:'');
+ const errorDescription=run.errorCode==='DAILY_GATEWAY_QUOTA_PAUSED'
+  ? 'Daily AI allowance reached. Continue after midnight, South African time.'
+  : run.errorCode==='BENCHMARK_SAVE_UNCERTAIN'
+   ? 'Save status uncertain. Refresh before considering any more paid requests.'
+   : run.errorCode? 'Issue: '+run.errorCode.replaceAll('_',' ').toLowerCase():'';
+ $('budget').textContent='Run token reservations: '+run.spentReservedTokens+' / '+run.maxReservedTokens+
+  ' · Reported DeepSeek tokens: '+run.reportedProviderTokens+(errorDescription?' · '+errorDescription:'');
  $('continue').disabled=running||run.busy||!['ACTIVE','PAUSED'].includes(run.status);
  $('continue').textContent=run.status==='PAUSED'?'Resume and continue':'Run next steps';
  // The pause control stays available during a long phone-side loop;
