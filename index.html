@@ -80,6 +80,7 @@ details>summary{cursor:pointer;min-height:44px;align-content:center}
 const $=id=>document.getElementById(id);
 const endpoint='https://urfaencnwgzfjbffoocf.supabase.co/functions/v1/wos-five-pillar-mobile';
 let config=null, accessToken=null, refreshToken=null, currentRun=null, running=false, pauseRequested=false;
+let creatingRun=false,createGeneration=0;
 let sessionEpoch=0,runGeneration=0,answersOffset=0;
 const say=(txt)=>{$('alert').textContent=txt;};
 const hidden=(id,on)=>$(id).classList.toggle('hidden',on);
@@ -110,14 +111,14 @@ function selectedOptions(select,items){
  items.forEach(item=>{const o=document.createElement('option');o.value=item.id;o.textContent=item.label;select.append(o);});
 }
 function drawRun(run){
- if(!run){currentRun=null;hidden('runCard',true);$('create').disabled=false;$('newRunBlocker').textContent='';return;}
+ if(!run){currentRun=null;hidden('runCard',true);$('create').disabled=creatingRun;$('newRunBlocker').textContent='';return;}
  if(currentRun?.id!==run.id){
   answersOffset=0;$('results').replaceChildren();
   $('previousAnswers').disabled=true;$('nextAnswers').disabled=true;
  }
  currentRun=run;hidden('runCard',false);
  const blockedByOpenRun=['ACTIVE','PAUSED'].includes(run.status);
- $('create').disabled=blockedByOpenRun;
+ $('create').disabled=creatingRun||blockedByOpenRun;
  $('newRunBlocker').textContent=blockedByOpenRun
   ? 'A '+run.caseCount+'-question run is still '+run.status.toLowerCase()+'. To start a DIFFERENT test, select the existing run and press Cancel (not Delete). Cancellation preserves its saved answers until their normal expiry. Then create the new '+$('caseCount').value+'-question run.'
   : '';
@@ -188,6 +189,7 @@ function showSelectedCaseCount(){
 $('caseCount').addEventListener('change',showSelectedCaseCount);
 showSelectedCaseCount();
 $('create').addEventListener('click',async()=>{
+ if(creatingRun)return;
  if(currentRun&&['ACTIVE','PAUSED'].includes(currentRun.status)){
   say('Another run is open. Cancel the existing run (not Delete) to preserve its answers, then create the selected new pilot.');
   return;
@@ -195,7 +197,8 @@ $('create').addEventListener('click',async()=>{
  if(!$('acknowledge').checked){say('Confirm the paid-call acknowledgement before starting.');return;}
  const caseCount=Number($('caseCount').value);
  if(caseCount===150&&$('confirmText').value.trim()!=='RUN 150'){say('Type RUN 150 exactly to proceed.');return;}
- const button=$('create'),epoch=sessionEpoch;button.disabled=true;
+ const button=$('create'),epoch=sessionEpoch,operation=++createGeneration;
+ creatingRun=true;button.disabled=true;
  try{
   const data=await raw('create',{clubId:$('club').value,caseCount,acknowledgePaid:true,
    confirmation:caseCount===150?'RUN 150':null});
@@ -213,7 +216,12 @@ $('create').addEventListener('click',async()=>{
    try{await loadRuns();}catch{}
   }else say('Cannot create: '+e.message);
  }
- finally{if(epoch===sessionEpoch&&(!currentRun||!['ACTIVE','PAUSED'].includes(currentRun.status)))button.disabled=false;}
+ finally{
+  if(operation===createGeneration){
+   creatingRun=false;
+   if(epoch===sessionEpoch)button.disabled=!!(currentRun&&['ACTIVE','PAUSED'].includes(currentRun.status));
+  }
+ }
 });
 $('continue').addEventListener('click',async()=>{
  if(!currentRun||running)return;
@@ -282,7 +290,7 @@ $('cancel').addEventListener('click',async()=>{
 });
 $('refresh').addEventListener('click',async()=>{try{await loadRuns();say('Status refreshed.');}catch(e){say('Refresh failed: '+e.message);}});
 $('logout').addEventListener('click',()=>{
- sessionEpoch++;runGeneration++;pauseRequested=true;running=false;
+ sessionEpoch++;runGeneration++;createGeneration++;creatingRun=false;pauseRequested=true;running=false;
  accessToken=null;refreshToken=null;drawRun(null);
  $('results').replaceChildren();$('runs').replaceChildren();
  $('email').value='';$('password').value='';
