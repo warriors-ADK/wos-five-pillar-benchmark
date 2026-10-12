@@ -45,6 +45,7 @@ details>summary{cursor:pointer;min-height:44px;align-content:center}
 <option value="5">Preview: 5 questions × 2 answers (10 calls)</option>
 <option value="15">Pilot: 15 questions × 2 answers (30 calls)</option>
 <option value="150">Full: 150 questions × 2 answers (300 calls)</option></select>
+<p id="selectedSize" class="small muted" aria-live="polite"></p>
 <p class="small muted">Each answer is charged against the existing gateway quota and the run's own server token budget. No financial cost ceiling is guaranteed in rand.</p>
 <label><input id="acknowledge" type="checkbox" style="width:auto;min-height:20px;margin-right:7px">I authorize potentially paid, read-only DeepSeek research calls.</label>
 <div id="fullConfirm" class="hidden"><label for="confirmText">Type RUN 150 to authorize 300 model calls</label><input id="confirmText" placeholder="RUN 150" autocomplete="off"></div>
@@ -114,7 +115,7 @@ function drawRun(run){
   $('previousAnswers').disabled=true;$('nextAnswers').disabled=true;
  }
  currentRun=run;hidden('runCard',false);
- $('runState').textContent='Status: '+run.status+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
+ $('runState').textContent='Status: '+run.status+' · EXISTING RUN: '+run.caseCount+' questions / '+run.totalSteps+' answers'+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
  $('progress').max=run.totalSteps;$('progress').value=run.completedSteps;
  $('numbers').textContent=run.completedSteps+' of '+run.totalSteps+' answers saved · '+Math.floor(run.completedSteps/2)+' complete question pairs';
  $('budget').textContent='Server token reservations: '+run.spentReservedTokens+' / '+run.maxReservedTokens+
@@ -169,7 +170,16 @@ $('login').addEventListener('submit',async e=>{
  }catch(e){if(epoch===sessionEpoch){accessToken=null;refreshToken=null;say('Sign-in blocked: '+e.message);}}
  finally{$('password').value='';button.disabled=false;}
 });
-$('caseCount').addEventListener('change',()=>hidden('fullConfirm',$('caseCount').value!=='150'));
+// Only the 15-case pilot can be preselected by a link. 150-case paid tests
+// always require explicit manual selection and the existing RUN 150 confirmation.
+if(new URLSearchParams(location.search).get('cases')==='15')$('caseCount').value='15';
+function showSelectedCaseCount(){
+ const count=Number($('caseCount').value);
+ $('selectedSize').textContent='NEW RUN: '+count+' questions / '+(count*2)+' potentially paid answers. Existing saved runs are unaffected.';
+ hidden('fullConfirm',count!==150);
+}
+$('caseCount').addEventListener('change',showSelectedCaseCount);
+showSelectedCaseCount();
 $('create').addEventListener('click',async()=>{
  if(!$('acknowledge').checked){say('Confirm the paid-call acknowledgement before starting.');return;}
  const caseCount=Number($('caseCount').value);
