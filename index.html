@@ -50,6 +50,7 @@ details>summary{cursor:pointer;min-height:44px;align-content:center}
 <label><input id="acknowledge" type="checkbox" style="width:auto;min-height:20px;margin-right:7px">I authorize potentially paid, read-only DeepSeek research calls.</label>
 <div id="fullConfirm" class="hidden"><label for="confirmText">Type RUN 150 to authorize 300 model calls</label><input id="confirmText" placeholder="RUN 150" autocomplete="off"></div>
 <button id="create" type="button">Create benchmark run</button>
+<p id="newRunBlocker" class="small muted" role="status"></p>
 </div>
 <section id="runCard" class="card hidden" aria-labelledby="runTitle"><h2 id="runTitle">Current benchmark run</h2>
 <p id="runState"></p><progress id="progress" max="1" value="0"></progress><p id="numbers" class="muted"></p>
@@ -109,12 +110,17 @@ function selectedOptions(select,items){
  items.forEach(item=>{const o=document.createElement('option');o.value=item.id;o.textContent=item.label;select.append(o);});
 }
 function drawRun(run){
- if(!run){currentRun=null;hidden('runCard',true);return;}
+ if(!run){currentRun=null;hidden('runCard',true);$('create').disabled=false;$('newRunBlocker').textContent='';return;}
  if(currentRun?.id!==run.id){
   answersOffset=0;$('results').replaceChildren();
   $('previousAnswers').disabled=true;$('nextAnswers').disabled=true;
  }
  currentRun=run;hidden('runCard',false);
+ const blockedByOpenRun=['ACTIVE','PAUSED'].includes(run.status);
+ $('create').disabled=blockedByOpenRun;
+ $('newRunBlocker').textContent=blockedByOpenRun
+  ? 'A '+run.caseCount+'-question run is still '+run.status.toLowerCase()+'. To start a DIFFERENT test, select the existing run and press Cancel (not Delete). Cancellation preserves its saved answers until their normal expiry. Then create the new '+$('caseCount').value+'-question run.'
+  : '';
  $('runState').textContent='Status: '+run.status+' · EXISTING RUN: '+run.caseCount+' questions / '+run.totalSteps+' answers'+(run.busy?' (server step in progress)':'')+' · '+run.measurement;
  $('progress').max=run.totalSteps;$('progress').value=run.completedSteps;
  $('numbers').textContent=run.completedSteps+' of '+run.totalSteps+' answers saved · '+Math.floor(run.completedSteps/2)+' complete question pairs';
@@ -137,7 +143,7 @@ async function loadRuns(){
  for(const run of items){
   const row=document.createElement('div');row.style.marginBottom='12px';
   const button=document.createElement('button');button.className='secondary';
-  button.textContent=run.status+' · '+run.completedSteps+'/'+run.totalSteps+' · '+new Date(run.createdAt).toLocaleString();
+  button.textContent=run.status+' · '+run.caseCount+' questions · '+run.completedSteps+'/'+run.totalSteps+' answers · '+new Date(run.createdAt).toLocaleString();
   button.addEventListener('click',()=>{drawRun(run);$('results').replaceChildren();});
   row.append(button);root.append(row);
  }
@@ -165,7 +171,7 @@ $('login').addEventListener('submit',async e=>{
   selectedOptions($('club'),auth.clubs);hidden('loginCard',true);hidden('workspace',false);
   $('identity').textContent='Signed in · Club access checked by server';
   try{
-   await loadRuns();say('Signed in. Start a small preview to test the gateway.');
+   await loadRuns();say('Signed in. Check the NEW RUN question count before creating a paid test.');
   }catch(e){if(epoch===sessionEpoch)say('Signed in, but saved runs could not load: '+e.message+'. Use Refresh status.');}
  }catch(e){if(epoch===sessionEpoch){accessToken=null;refreshToken=null;say('Sign-in blocked: '+e.message);}}
  finally{$('password').value='';button.disabled=false;}
@@ -177,10 +183,15 @@ function showSelectedCaseCount(){
  const count=Number($('caseCount').value);
  $('selectedSize').textContent='NEW RUN: '+count+' questions / '+(count*2)+' potentially paid answers. Existing saved runs are unaffected.';
  hidden('fullConfirm',count!==150);
+ if(currentRun)drawRun(currentRun);
 }
 $('caseCount').addEventListener('change',showSelectedCaseCount);
 showSelectedCaseCount();
 $('create').addEventListener('click',async()=>{
+ if(currentRun&&['ACTIVE','PAUSED'].includes(currentRun.status)){
+  say('Another run is open. Cancel the existing run (not Delete) to preserve its answers, then create the selected new pilot.');
+  return;
+ }
  if(!$('acknowledge').checked){say('Confirm the paid-call acknowledgement before starting.');return;}
  const caseCount=Number($('caseCount').value);
  if(caseCount===150&&$('confirmText').value.trim()!=='RUN 150'){say('Type RUN 150 exactly to proceed.');return;}
@@ -190,10 +201,19 @@ $('create').addEventListener('click',async()=>{
    confirmation:caseCount===150?'RUN 150':null});
   if(epoch!==sessionEpoch)return;
   drawRun(data.run);$('results').replaceChildren();
-  await loadRuns();
-  if(epoch===sessionEpoch)say('Run created. Press Run next steps to start paid requests.');
- }catch(e){if(epoch===sessionEpoch)say('Cannot start: '+e.message);}
- finally{button.disabled=false;}
+  // A lost refresh is NOT a lost creation. Never suggest a second run
+  // after receiving a successful created-run receipt.
+  try{await loadRuns();}
+  catch(e){if(epoch===sessionEpoch)say('Run CREATED and saved, but refreshing the run list failed. Press Refresh status; do NOT create a second run.');return;}
+  if(epoch===sessionEpoch)say('Created '+caseCount+'-question run. Press Run next steps to start paid requests.');
+ }catch(e){
+  if(epoch!==sessionEpoch)return;
+  if(e.message==='ACTIVE_RUN_ALREADY_EXISTS'){
+   say('A different ACTIVE or PAUSED run already exists. Select it and press Cancel, NOT Delete, to preserve saved answers; then try again.');
+   try{await loadRuns();}catch{}
+  }else say('Cannot create: '+e.message);
+ }
+ finally{if(epoch===sessionEpoch&&(!currentRun||!['ACTIVE','PAUSED'].includes(currentRun.status)))button.disabled=false;}
 });
 $('continue').addEventListener('click',async()=>{
  if(!currentRun||running)return;
